@@ -281,6 +281,7 @@ export class PoolsMonitorService implements OnModuleInit {
     const pair = pool.tokens.map((token) => token.symbol).join('/');
     const link = this.buildPoolLink(pool);
     const linkText = link ? `[link](${link})` : 'link: N/A';
+    const addressText = `[address](${pool.address})`;
     return [
       `**${pair}**`,
       `- chain: ${pool.chain.name}`,
@@ -289,7 +290,7 @@ export class PoolsMonitorService implements OnModuleInit {
       `- earnFee: ${this.formatKmb(pool.earnFee)}`,
       `- volume: ${this.formatKmb(pool.volume)}`,
       `- tvl: ${this.formatKmb(pool.tvl)}`,
-      `- address: \`${pool.address}\``,
+      `- address: \`${addressText}\``,
       `- ${linkText}`,
     ].join('\n');
   }
@@ -297,9 +298,11 @@ export class PoolsMonitorService implements OnModuleInit {
   private buildPoolLink(pool: Pool): string | null {
     switch (pool.chain.id) {
       case 8453:
-        return `https://basescan.org/address/${pool.address}`;
+        return `https://app.uniswap.org/explore/pools/base/${pool.address}`;
+        // return `https://basescan.org/address/${pool.address}`;
       case 56:
-        return `https://bscscan.com/address/${pool.address}`;
+        // return `https://bscscan.com/address/${pool.address}`;
+        return `https://app.uniswap.org/explore/pools/bnb/${pool.address}`;
       default:
         return null;
     }
