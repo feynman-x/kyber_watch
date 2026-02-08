@@ -1,5 +1,5 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { Cron } from '@nestjs/schedule';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { Pool, PoolsApiResponse } from './pools.types';
@@ -17,12 +17,18 @@ interface MonitorConfig {
   notifyStorePath: string;
 }
 
+interface NotifyState {
+  notifiedAt: number;
+  volume: number;
+}
+
 @Injectable()
 export class PoolsMonitorService implements OnModuleInit {
   private readonly logger = new Logger(PoolsMonitorService.name);
   private running = false;
-  private readonly notifiedAt = new Map<string, number>();
+  private readonly notifyState = new Map<string, NotifyState>();
   private readonly config: MonitorConfig;
+  private readonly volumeGrowthRatioForRenotify = 0.2;
 
   constructor() {
     this.config = {
@@ -49,7 +55,7 @@ export class PoolsMonitorService implements OnModuleInit {
     await this.runOnce();
   }
 
-  @Cron(CronExpression.EVERY_HOUR)
+  @Cron('*/15 * * * *')
   private async runOnce(): Promise<void> {
     if (this.running) {
       this.logger.log('skip run: previous run still in progress.');
@@ -76,7 +82,10 @@ export class PoolsMonitorService implements OnModuleInit {
       this.logger.log(`notified pools: ${deduped.length}`);
       const now = Date.now();
       for (const pool of deduped) {
-        this.notifiedAt.set(pool.address.toLowerCase(), now);
+        this.notifyState.set(pool.address.toLowerCase(), {
+          notifiedAt: now,
+          volume: pool.volume,
+        });
       }
       await this.persistNotifiedState();
     } catch (error) {
@@ -134,15 +143,26 @@ export class PoolsMonitorService implements OnModuleInit {
   }
 
   private applyCooldown(pools: Pool[]): Pool[] {
-    if (this.config.notifyCooldownMs <= 0) {
-      return pools;
-    }
-
     const now = Date.now();
     return pools.filter((pool) => {
       const key = pool.address.toLowerCase();
-      const last = this.notifiedAt.get(key);
-      return last === undefined || now - last >= this.config.notifyCooldownMs;
+      const state = this.notifyState.get(key);
+      if (!state) {
+        return true;
+      }
+
+      const volumeGrowthBase = Math.max(state.volume, 0);
+      const volumeIncreaseThreshold =
+        volumeGrowthBase * (1 + this.volumeGrowthRatioForRenotify);
+      if (pool.volume >= volumeIncreaseThreshold) {
+        return true;
+      }
+
+      if (this.config.notifyCooldownMs <= 0) {
+        return false;
+      }
+
+      return now - state.notifiedAt >= this.config.notifyCooldownMs;
     });
   }
 
@@ -150,14 +170,32 @@ export class PoolsMonitorService implements OnModuleInit {
     const filePath = this.resolveStorePath();
     try {
       const raw = await fs.readFile(filePath, 'utf-8');
-      const data = JSON.parse(raw) as Record<string, number>;
-      const now = Date.now();
-      for (const [address, timestamp] of Object.entries(data)) {
-        if (Number.isFinite(timestamp) && now - timestamp < this.config.notifyCooldownMs) {
-          this.notifiedAt.set(address.toLowerCase(), timestamp);
+      const data = JSON.parse(raw) as Record<
+        string,
+        number | { notifiedAt?: number; volume?: number }
+      >;
+      for (const [address, value] of Object.entries(data)) {
+        if (typeof value === 'number' && Number.isFinite(value)) {
+          this.notifyState.set(address.toLowerCase(), {
+            notifiedAt: value,
+            volume: 0,
+          });
+          continue;
+        }
+
+        if (
+          value &&
+          typeof value === 'object' &&
+          Number.isFinite(value.notifiedAt) &&
+          Number.isFinite(value.volume)
+        ) {
+          this.notifyState.set(address.toLowerCase(), {
+            notifiedAt: value.notifiedAt,
+            volume: value.volume,
+          });
         }
       }
-      this.logger.log(`loaded notified state: ${this.notifiedAt.size}`);
+      this.logger.log(`loaded notified state: ${this.notifyState.size}`);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
         this.logger.warn(`failed to load notified state: ${String(error)}`);
@@ -169,7 +207,7 @@ export class PoolsMonitorService implements OnModuleInit {
     const filePath = this.resolveStorePath();
     const dir = path.dirname(filePath);
     await fs.mkdir(dir, { recursive: true });
-    const payload = JSON.stringify(Object.fromEntries(this.notifiedAt), null, 2);
+    const payload = JSON.stringify(Object.fromEntries(this.notifyState), null, 2);
     const tmpPath = `${filePath}.tmp`;
     await fs.writeFile(tmpPath, payload, 'utf-8');
     await fs.rename(tmpPath, filePath);
@@ -251,7 +289,7 @@ export class PoolsMonitorService implements OnModuleInit {
       `- earnFee: ${this.formatKmb(pool.earnFee)}`,
       `- volume: ${this.formatKmb(pool.volume)}`,
       `- tvl: ${this.formatKmb(pool.tvl)}`,
-      `- address: ${pool.address}`,
+      `- address: \`${pool.address}\``,
       `- ${linkText}`,
     ].join('\n');
   }
