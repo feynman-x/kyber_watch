@@ -12,7 +12,8 @@ interface MonitorConfig {
   minApr: number;
   minEarnFee: number;
   minVolume: number;
-  larkWebhookUrl: string;
+  telegramBotToken: string;
+  telegramChatId: string;
   notifyCooldownMs: number;
   notifyStorePath: string;
 }
@@ -41,7 +42,8 @@ export class PoolsMonitorService implements OnModuleInit {
       minApr: this.readNumber('POOL_MIN_APR', 3000),
       minEarnFee: this.readNumber('POOL_MIN_EARN_FEE', 1000),
       minVolume: this.readNumber('POOL_MIN_VOLUME', 100_000),
-      larkWebhookUrl: process.env.LARK_WEBHOOK_URL ?? '',
+      telegramBotToken: process.env.TELEGRAM_BOT_TOKEN ?? '',
+      telegramChatId: process.env.TELEGRAM_CHAT_ID ?? '',
       notifyCooldownMs: this.readNumber(
         'POOL_NOTIFY_COOLDOWN_MS',
         1 * 24 * 60 * 60_000,
@@ -78,7 +80,7 @@ export class PoolsMonitorService implements OnModuleInit {
         return;
       }
 
-      await this.notifyLark(deduped);
+      await this.notifyTelegram(deduped);
       this.logger.log(`notified pools: ${deduped.length}`);
       const now = Date.now();
       for (const pool of deduped) {
@@ -219,78 +221,51 @@ export class PoolsMonitorService implements OnModuleInit {
       : path.resolve(process.cwd(), this.config.notifyStorePath);
   }
 
-  private async notifyLark(pools: Pool[]): Promise<void> {
-    if (!this.config.larkWebhookUrl) {
-      this.logger.warn('LARK_WEBHOOK_URL is not set. Skipping notify.');
+  private async notifyTelegram(pools: Pool[]): Promise<void> {
+    if (!this.config.telegramBotToken || !this.config.telegramChatId) {
+      this.logger.warn('TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is not set. Skipping notify.');
       return;
     }
 
-    const response = await fetch(this.config.larkWebhookUrl, {
+    const text = this.buildTelegramMessage(pools);
+    const url = `https://api.telegram.org/bot${this.config.telegramBotToken}/sendMessage`;
+    const response = await fetch(url, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        msg_type: 'interactive',
-        card: this.buildLarkCard(pools),
+        chat_id: this.config.telegramChatId,
+        text,
+        parse_mode: 'HTML',
+        disable_web_page_preview: true,
       }),
     });
 
     if (!response.ok) {
       const body = await response.text();
-      throw new Error(`Lark notify failed: ${response.status} ${response.statusText} - ${body}`);
+      throw new Error(`Telegram notify failed: ${response.status} ${response.statusText} - ${body}`);
     }
   }
 
-  private buildLarkCard(pools: Pool[]): Record<string, unknown> {
-    const elements = pools.flatMap((pool) => [
-      {
-        tag: 'markdown',
-        content: this.formatPoolMarkdown(pool),
-      },
-      {
-        tag: 'hr',
-      },
-    ]);
-
-    if (elements.length > 0) {
-      elements.pop();
-    }
-
-    elements.push({
-      tag: 'markdown',
-      content: `Filters: apr>=${this.config.minApr}, earnFee>=${this.config.minEarnFee}, volume>=${this.config.minVolume}`,
-    });
-
-    return {
-      config: {
-        wide_screen_mode: true,
-      },
-      header: {
-        template: 'blue',
-        title: {
-          tag: 'plain_text',
-          content: `Pools matched: ${pools.length}`,
-        },
-      },
-      elements,
-    };
+  private buildTelegramMessage(pools: Pool[]): string {
+    const header = `<b>Pools matched: ${pools.length}</b>`;
+    const poolLines = pools.map((pool) => this.formatPoolMessage(pool)).join('\n\n');
+    const footer = `Filters: apr&gt;=${this.config.minApr}, earnFee&gt;=${this.config.minEarnFee}, volume&gt;=${this.config.minVolume}`;
+    return [header, poolLines, footer].join('\n\n');
   }
 
-  private formatPoolMarkdown(pool: Pool): string {
+  private formatPoolMessage(pool: Pool): string {
     const pair = pool.tokens.map((token) => token.symbol).join('/');
     const link = this.buildPoolLink(pool);
-    const linkText = link ? `[link](${link})` : 'link: N/A';
-    const addressText = `[address](${pool.address})`;
+    const linkText = link ? `<a href="${link}">link</a>` : 'link: N/A';
     return [
-      `**${pair}**`,
+      `<b>${pair}</b>`,
       `- chain: ${pool.chain.name}`,
       `- exchange: ${pool.exchange}`,
       `- apr: ${this.formatPercent(pool.apr)}`,
       `- earnFee: ${this.formatKmb(pool.earnFee)}`,
       `- volume: ${this.formatKmb(pool.volume)}`,
       `- tvl: ${this.formatKmb(pool.tvl)}`,
-      `- address: \`${addressText}\``,
+      `- address: <code>${pool.address}</code>`,
       `- ${linkText}`,
     ].join('\n');
   }
