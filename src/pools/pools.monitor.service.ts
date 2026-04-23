@@ -14,6 +14,7 @@ interface MonitorConfig {
   minVolume: number;
   telegramBotToken: string;
   telegramChatId: string;
+  telegramMessageThreadId?: number;
   notifyCooldownMs: number;
   notifyStorePath: string;
 }
@@ -44,6 +45,9 @@ export class PoolsMonitorService implements OnModuleInit {
       minVolume: this.readNumber('POOL_MIN_VOLUME', 100_000),
       telegramBotToken: process.env.TELEGRAM_BOT_TOKEN ?? '',
       telegramChatId: process.env.TELEGRAM_CHAT_ID ?? '',
+      telegramMessageThreadId: this.readOptionalNumber(
+        'POOL_MONITOR_TELEGRAM_MESSAGE_THREAD_ID',
+      ),
       notifyCooldownMs: this.readNumber(
         'POOL_NOTIFY_COOLDOWN_MS',
         1 * 24 * 60 * 60_000,
@@ -229,15 +233,27 @@ export class PoolsMonitorService implements OnModuleInit {
 
     const text = this.buildTelegramMessage(pools);
     const url = `https://api.telegram.org/bot${this.config.telegramBotToken}/sendMessage`;
+    const payload: {
+      chat_id: string;
+      text: string;
+      parse_mode: 'HTML';
+      disable_web_page_preview: true;
+      message_thread_id?: number;
+    } = {
+      chat_id: this.config.telegramChatId,
+      text,
+      parse_mode: 'HTML',
+      disable_web_page_preview: true,
+    };
+
+    if (this.config.telegramMessageThreadId !== undefined) {
+      payload.message_thread_id = this.config.telegramMessageThreadId;
+    }
+
     const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: this.config.telegramChatId,
-        text,
-        parse_mode: 'HTML',
-        disable_web_page_preview: true,
-      }),
+      body: JSON.stringify(payload),
     });
 
     if (!response.ok) {
@@ -312,6 +328,16 @@ export class PoolsMonitorService implements OnModuleInit {
     }
     const value = Number(raw);
     return Number.isFinite(value) ? value : fallback;
+  }
+
+  private readOptionalNumber(envKey: string): number | undefined {
+    const raw = process.env[envKey];
+    if (!raw) {
+      return undefined;
+    }
+
+    const value = Number(raw);
+    return Number.isFinite(value) ? value : undefined;
   }
 
   private delay(ms: number): Promise<void> {
