@@ -184,6 +184,11 @@ export class LpMonitorService implements OnModuleInit {
     }
 
     for (const report of reports) {
+      if (report.positions.length === 0) {
+        this.logger.log(`skip telegram notify for ${report.address}: no LP positions found.`);
+        continue;
+      }
+
       const text = this.buildTelegramMessage(report);
       const url = `https://api.telegram.org/bot${this.config.telegramBotToken}/sendMessage`;
       const payload: {
@@ -226,10 +231,6 @@ export class LpMonitorService implements OnModuleInit {
       `- total value: ${this.formatUsd(report.stats.totalValueUsd)}`,
       `- unclaimed fee: ${this.formatUsd(report.stats.totalUnclaimedFeeUsd)}`,
     ].join('\n');
-
-    if (report.positions.length === 0) {
-      return [header, summary, 'No LP positions found.'].join('\n\n');
-    }
 
     const positions = report.positions
       .map((position, index) => this.formatPosition(position, index + 1))

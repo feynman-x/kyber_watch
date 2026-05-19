@@ -59,7 +59,7 @@ $ npm run test:cov
 
 ## LP Monitor
 
-LP Monitor will check the watched wallet addresses every hour and send a Telegram notification for each address. The message includes:
+LP Monitor will check the watched wallet addresses every hour and send a Telegram notification for each address with one or more LP positions. The message includes:
 
 - Total LP value
 - Total unclaimed fee
