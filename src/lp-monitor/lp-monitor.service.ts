@@ -8,6 +8,8 @@ import {
 import { Cron } from '@nestjs/schedule';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { fetch as undiciFetch, type Dispatcher } from 'undici';
+import { createDnsDispatcher } from '../network/dns-dispatcher';
 import type {
   AddressReport,
   AddressStore,
@@ -32,10 +34,12 @@ interface LpMonitorConfig {
 export class LpMonitorService implements OnModuleInit {
   private readonly logger = new Logger(LpMonitorService.name);
   private readonly config: LpMonitorConfig;
+  private readonly kyberDispatcher?: Dispatcher;
   private readonly addresses = new Set<string>();
   private running = false;
 
   constructor() {
+    this.kyberDispatcher = createDnsDispatcher(process.env.DNS_SERVERS);
     this.config = {
       apiBaseUrl:
         process.env.KYBER_POSITIONS_API_BASE_URL ??
@@ -150,7 +154,9 @@ export class LpMonitorService implements OnModuleInit {
       });
 
       const url = `${this.config.apiBaseUrl}?${params.toString()}`;
-      const response = await fetch(url);
+      const response = await undiciFetch(url, {
+        dispatcher: this.kyberDispatcher,
+      });
       if (!response.ok) {
         throw new Error(
           `Positions API failed for ${address}: ${response.status} ${response.statusText}`,

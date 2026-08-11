@@ -2,7 +2,10 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { fetch as undiciFetch, type Dispatcher } from 'undici';
+import { createDnsDispatcher } from '../network/dns-dispatcher';
 import type { Pool, PoolsApiResponse } from './pools.types';
+import { log } from 'node:console';
 
 interface MonitorConfig {
   apiBaseUrl: string;
@@ -15,6 +18,7 @@ interface MonitorConfig {
   telegramBotToken: string;
   telegramChatId: string;
   telegramMessageThreadId?: number;
+  requestTimeoutMs: number;
   notifyCooldownMs: number;
   notifyStorePath: string;
 }
@@ -30,9 +34,11 @@ export class PoolsMonitorService implements OnModuleInit {
   private running = false;
   private readonly notifyState = new Map<string, NotifyState>();
   private readonly config: MonitorConfig;
+  private readonly kyberDispatcher?: Dispatcher;
   private readonly volumeGrowthRatioForRenotify = 0.2;
 
   constructor() {
+    this.kyberDispatcher = createDnsDispatcher(process.env.DNS_SERVERS);
     this.config = {
       apiBaseUrl:
         process.env.KYBER_EARN_API_BASE_URL ??
@@ -47,6 +53,10 @@ export class PoolsMonitorService implements OnModuleInit {
       telegramChatId: process.env.TELEGRAM_CHAT_ID ?? '',
       telegramMessageThreadId: this.readOptionalNumber(
         'POOL_MONITOR_TELEGRAM_MESSAGE_THREAD_ID',
+      ),
+      requestTimeoutMs: Math.max(
+        this.readNumber('POOL_REQUEST_TIMEOUT_MS', 15_000),
+        1,
       ),
       notifyCooldownMs: this.readNumber(
         'POOL_NOTIFY_COOLDOWN_MS',
@@ -95,7 +105,7 @@ export class PoolsMonitorService implements OnModuleInit {
       }
       await this.persistNotifiedState();
     } catch (error) {
-      this.logger.error('run failed', error instanceof Error ? error.stack : `${error}`);
+      this.logger.error('run failed', this.formatError(error));
     } finally {
       const elapsedMs = Date.now() - startedAt;
       this.logger.log(`run end: ${elapsedMs}ms`);
@@ -120,7 +130,11 @@ export class PoolsMonitorService implements OnModuleInit {
       });
 
       const url = `${this.config.apiBaseUrl}?${params.toString()}`;
-      const response = await fetch(url);
+      console.log("url = " + url);
+      const response = await undiciFetch(url, {
+        dispatcher: this.kyberDispatcher,
+        signal: AbortSignal.timeout(this.config.requestTimeoutMs),
+      });
       if (!response.ok) {
         throw new Error(`Pools API failed: ${response.status} ${response.statusText}`);
       }
@@ -338,6 +352,23 @@ export class PoolsMonitorService implements OnModuleInit {
 
     const value = Number(raw);
     return Number.isFinite(value) ? value : undefined;
+  }
+
+  private formatError(error: unknown): string {
+    if (!(error instanceof Error)) {
+      return String(error);
+    }
+
+    const details = [error.stack ?? `${error.name}: ${error.message}`];
+    if (error.cause instanceof Error) {
+      details.push(
+        `Caused by: ${error.cause.stack ?? `${error.cause.name}: ${error.cause.message}`}`,
+      );
+    } else if (error.cause !== undefined) {
+      details.push(`Caused by: ${String(error.cause)}`);
+    }
+
+    return details.join('\n');
   }
 
   private delay(ms: number): Promise<void> {

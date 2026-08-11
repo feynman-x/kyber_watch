@@ -9,7 +9,7 @@ import { PoolsMonitorService } from './pools/pools.monitor.service';
 
 @Module({
   imports: [ConfigModule.forRoot({ isGlobal: true }), ScheduleModule.forRoot()],
-  controllers: [AppController, LpMonitorController],
-  providers: [AppService, PoolsMonitorService, LpMonitorService],
+  controllers: [AppController],
+  providers: [AppService, PoolsMonitorService],
 })
 export class AppModule {}
