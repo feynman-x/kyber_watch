@@ -6,9 +6,14 @@ import { AppService } from './app.service';
 import { LpMonitorController } from './lp-monitor/lp-monitor.controller';
 import { LpMonitorService } from './lp-monitor/lp-monitor.service';
 import { PoolsMonitorService } from './pools/pools.monitor.service';
+import { OkxSourceModule } from './okx-source/okx-source.module';
 
 @Module({
-  imports: [ConfigModule.forRoot({ isGlobal: true }), ScheduleModule.forRoot()],
+  imports: [
+    ConfigModule.forRoot({ isGlobal: true }),
+    ScheduleModule.forRoot(),
+    OkxSourceModule,
+  ],
   controllers: [AppController],
   providers: [AppService, PoolsMonitorService],
 })

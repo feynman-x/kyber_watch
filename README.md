@@ -153,6 +153,73 @@ Trigger one manual check immediately:
 curl -X POST http://localhost:3000/lp-monitor/run
 ```
 
+## OKX Source
+
+The `okx-source` module collects token rankings for Ethereum, Solana, BNB Chain,
+Robinhood, and Base. It keeps the current and previous successful snapshots in
+memory so downstream monitors can inspect rank changes without coupling alert
+rules to the upstream API client.
+
+Configure the OKX Onchain OS credentials:
+
+```bash
+OKX_API_KEY=
+OKX_SECRET_KEY=
+OKX_PASSPHRASE=
+OKX_API_BASE_URL=https://web3.okx.com
+OKX_REQUEST_TIMEOUT_MS=15000
+OKX_MIN_REQUEST_INTERVAL_MS=1100
+OKX_DNS_SERVERS=
+```
+
+`OKX_MIN_REQUEST_INTERVAL_MS` limits request bursts. Its default of 1100 ms is
+conservative for free-tier usage, including startup and manual refreshes.
+`OKX_DNS_SERVERS` overrides the shared `DNS_SERVERS` value when OKX requests
+need a dedicated DNS configuration. If omitted, the shared value is reused.
+
+The module collects:
+
+- All-chain Trending every 5 minutes, then keeps only the five focus chains
+- All-chain X mentions every 15 minutes, then keeps only the five focus chains
+- Combined five-chain 5-minute gainers every 3 minutes
+- Combined five-chain 1-hour volume ranking every 5 minutes
+- Combined five-chain 24-hour market-cap ranking once per day
+
+Hot-token snapshots expose the original `globalRank` and the locally filtered
+`focusRank`. Toplist snapshots expose the combined five-chain `focusRank`.
+Positive rank changes mean the token moved upward.
+
+Read all snapshots:
+
+```bash
+curl http://localhost:3000/okx-source/snapshots
+```
+
+Read one snapshot type:
+
+```bash
+curl http://localhost:3000/okx-source/snapshots/hot-trending
+```
+
+Valid types are `hot-trending`, `hot-x-mentioned`, `top-gainers`, `top-volume`,
+and `top-market-cap`.
+
+Refresh all rankings manually:
+
+```bash
+curl -X POST http://localhost:3000/okx-source/refresh \
+  -H 'Content-Type: application/json' \
+  -d '{}'
+```
+
+Refresh one ranking manually:
+
+```bash
+curl -X POST http://localhost:3000/okx-source/refresh \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"top-volume"}'
+```
+
 ## Deployment
 
 When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
